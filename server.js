@@ -3,7 +3,7 @@ const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
 const jwt = require('jsonwebtoken');
-const axios = require('axios');
+const { OAuth2Client } = require('google-auth-library');
 require('dotenv').config();
 
 const app = express();
@@ -11,6 +11,9 @@ const app = express();
 // Middleware
 app.use(express.json());
 app.use(cors());
+
+// Google OAuth client
+const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
 // MongoDB Connection
 mongoose.connect(process.env.MONGODB_URI)
@@ -41,42 +44,47 @@ const generateToken = (user) => {
     );
 };
 
-// Verify Google token and create/update user
+// Verify Google ID token and create/update user
 app.post('/auth/google', async (req, res) => {
     try {
-        const { token } = req.body;
+        const { idToken } = req.body;
         
-        if (!token) {
-            return res.status(400).json({ error: 'Token is required' });
+        if (!idToken) {
+            return res.status(400).json({ error: 'ID token is required' });
         }
 
-        // Verify token with Google
-        const googleResponse = await axios.get(
-            'https://www.googleapis.com/userinfo/v2/me',
-            {
-                headers: { Authorization: `Bearer ${token}` }
-            }
-        );
+        // Verify the ID token
+        const ticket = await googleClient.verifyIdToken({
+            idToken,
+            audience: process.env.GOOGLE_CLIENT_ID
+        });
 
-        const { id, email, name, picture } = googleResponse.data;
+        const payload = ticket.getPayload();
+        
+        // Get user data from the verified token
+        const { sub: googleId, email, name, picture } = payload;
+
+        console.log("Verified user:", email);
 
         // Find or create user
-        let user = await User.findOne({ googleId: id });
+        let user = await User.findOne({ googleId });
         
         if (!user) {
             // Create new user
             user = await User.create({
-                googleId: id,
+                googleId,
                 email,
                 name,
                 picture
             });
+            console.log("Created new user:", email);
         } else {
             // Update existing user info
             user.email = email;
             user.name = name;
             user.picture = picture;
             await user.save();
+            console.log("Updated existing user:", email);
         }
 
         // Generate JWT
@@ -101,7 +109,7 @@ app.post('/auth/google', async (req, res) => {
     }
 });
 
-// Protected route to get user info
+// Protected route to get user info (same as before)
 app.get('/api/user', async (req, res) => {
     try {
         const authHeader = req.headers.authorization;
@@ -124,12 +132,6 @@ app.get('/api/user', async (req, res) => {
         console.error('Auth Error:', error);
         res.status(401).json({ error: 'Unauthorized - Invalid token' });
     }
-});
-
-// Add logout route (just for API completeness)
-app.post('/auth/logout', (req, res) => {
-    // Nothing to do on server side for token-based auth
-    res.json({ success: true, message: 'Logged out successfully' });
 });
 
 const PORT = process.env.PORT || 3000;
