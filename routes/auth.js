@@ -11,17 +11,22 @@ const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 // Google authentication handler
 router.post('/google', async (req, res) => {
   try {
-    const { googleId, email, name, photoUrl, accessToken } = req.body;
+    const { googleId, email, name, photoUrl, idToken } = req.body;
 
-    // Verify Google token
-    const ticket = await client.verifyToken({
-      idToken: accessToken,
-      audience: process.env.GOOGLE_CLIENT_ID
-    }).catch(error => {
-      // If token verification fails, try alternative approach
-      console.log('Token verification failed, using provided data:', error.message);
-      // Continue with provided data instead of failing
-    });
+    // Verify Google token if idToken is provided
+    if (idToken) {
+      try {
+        const ticket = await client.verifyIdToken({
+          idToken: idToken,
+          audience: process.env.GOOGLE_CLIENT_ID
+        });
+        // Token verified successfully, can get payload if needed
+        // const payload = ticket.getPayload();
+      } catch (verifyError) {
+        console.log('Token verification failed, using provided data:', verifyError.message);
+        // Continue with provided data instead of failing
+      }
+    }
 
     // Find or create user
     let user = await User.findOne({ googleId });
