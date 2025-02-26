@@ -74,6 +74,7 @@ router.post('/google', async (req, res) => {
       process.env.JWT_SECRET,
       { expiresIn: '7d' }
     );
+    console.log(token);
     console.log('JWT token generated successfully');
 
     // Return token and user info
