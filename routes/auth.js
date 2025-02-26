@@ -133,7 +133,8 @@ router.get('/user', async (req, res) => {
         photoUrl: user.photoUrl
       }
     });
-    console.log('User data response sent');
+    
+    console.log('User data response sent',user.id,user.name,user.photoUrl);
   } catch (error) {
     console.error('Auth verification error:', error);
     if (error.name === 'JsonWebTokenError') {
