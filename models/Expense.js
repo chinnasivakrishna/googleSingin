@@ -2,65 +2,52 @@
 const mongoose = require('mongoose');
 
 const expenseSchema = new mongoose.Schema({
-  title: {
+  group: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Group',
+    required: true
+  },
+  description: {
     type: String,
     required: true,
     trim: true
   },
   amount: {
     type: Number,
-    required: true
+    required: true,
+    min: 0
   },
   paidBy: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
     required: true
   },
-  group: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'Group'
-  },
-  splitBetween: [{
+  splitAmong: [{
     user: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User'
     },
     amount: {
       type: Number,
-      required: true
+      default: 0
     },
-    status: {
-      type: String,
-      enum: ['pending', 'paid'],
-      default: 'pending'
+    settled: {
+      type: Boolean,
+      default: false
     }
   }],
-  category: {
-    type: String,
-    default: 'Other'
-  },
-  description: {
-    type: String
-  },
   date: {
     type: Date,
     default: Date.now
   },
-  attachments: [String],
-  createdAt: {
-    type: Date,
-    default: Date.now
+  category: {
+    type: String,
+    default: 'Other'
   },
-  updatedAt: {
-    type: Date,
-    default: Date.now
+  notes: {
+    type: String,
+    trim: true
   }
-});
-
-// Update timestamps on save
-expenseSchema.pre('save', function(next) {
-  this.updatedAt = Date.now();
-  next();
 });
 
 module.exports = mongoose.model('Expense', expenseSchema);
