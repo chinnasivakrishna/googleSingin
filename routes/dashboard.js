@@ -68,6 +68,92 @@ router.get('/groups', authMiddleware, async (req, res) => {
   console.log('--------------------------------------------------');
 });
 
+// Add this route to your dashboard.js file
+router.post('/groups/:groupId/invite', authMiddleware, async (req, res) => {
+  console.log('--------------------------------------------------');
+  console.log(`[${new Date().toISOString()}] Invite member request for group: ${req.params.groupId}`);
+
+  try {
+    const { groupId } = req.params;
+    const { email } = req.body;
+    const userId = req.user._id;
+
+    if (!mongoose.Types.ObjectId.isValid(groupId)) {
+      console.log('Invalid group ID format');
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid group ID'
+      });
+    }
+
+    // Find the group
+    const group = await Group.findById(groupId);
+    if (!group) {
+      console.log('Group not found');
+      return res.status(404).json({
+        success: false,
+        message: 'Group not found'
+      });
+    }
+
+    // Check if the user is the admin of the group
+    if (group.admin.toString() !== userId.toString()) {
+      console.log('User not authorized to invite members');
+      return res.status(403).json({
+        success: false,
+        message: 'Only the group admin can invite members'
+      });
+    }
+
+    // Find the user by email
+    const userToInvite = await User.findOne({ email: email.toLowerCase() });
+    if (!userToInvite) {
+      console.log('User not found');
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    // Check if the user is already a member of the group
+    const isAlreadyMember = group.members.some(member => member.user.toString() === userToInvite._id.toString());
+    if (isAlreadyMember) {
+      console.log('User is already a member of the group');
+      return res.status(400).json({
+        success: false,
+        message: 'User is already a member of the group'
+      });
+    }
+
+    // Add the user to the group's members list with a 'pending' status
+    group.members.push({
+      user: userToInvite._id,
+      status: 'pending',
+      role: 'member'
+    });
+
+    await group.save();
+    console.log(`User ${userToInvite._id} invited to group ${groupId}`);
+
+    res.status(200).json({
+      success: true,
+      message: 'Invitation sent successfully'
+    });
+
+    console.log('Invite member response sent successfully');
+  } catch (error) {
+    console.error('Invite member error:', error);
+    console.error('Error stack:', error.stack);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to send invitation',
+      error: error.message
+    });
+    console.log('Error response sent');
+  }
+  console.log('--------------------------------------------------');
+});
+
 // Create a new group
 router.post('/groups/create', authMiddleware, async (req, res) => {
   console.log('--------------------------------------------------');
@@ -252,15 +338,16 @@ router.get('/groups/:groupId', authMiddleware, async (req, res) => {
 });
 
 // Add expense to a group
+// Add expense to a group
 router.post('/groups/:groupId/expenses', authMiddleware, async (req, res) => {
   console.log('--------------------------------------------------');
   console.log(`[${new Date().toISOString()}] Add expense request for group: ${req.params.groupId}`);
-  
+
   try {
     const { groupId } = req.params;
     const { description, amount, splitAmong, category, notes, date } = req.body;
     const userId = req.user._id;
-    
+
     if (!mongoose.Types.ObjectId.isValid(groupId)) {
       console.log('Invalid group ID format');
       return res.status(400).json({
@@ -268,7 +355,7 @@ router.post('/groups/:groupId/expenses', authMiddleware, async (req, res) => {
         message: 'Invalid group ID'
       });
     }
-    
+
     if (!description || !amount || amount <= 0) {
       console.log('Invalid expense data');
       return res.status(400).json({
@@ -276,12 +363,12 @@ router.post('/groups/:groupId/expenses', authMiddleware, async (req, res) => {
         message: 'Description and amount (greater than 0) are required'
       });
     }
-    
+
     // Find the group
     const group = await Group.findById(groupId)
       .populate('admin', 'name email photoUrl')
       .populate('members.user', 'name email photoUrl');
-    
+
     if (!group) {
       console.log('Group not found');
       return res.status(404).json({
@@ -289,13 +376,13 @@ router.post('/groups/:groupId/expenses', authMiddleware, async (req, res) => {
         message: 'Group not found'
       });
     }
-    
+
     // Check if user is admin or active member
     const isAdmin = group.admin._id.toString() === userId.toString();
     const isMember = group.members.some(
       member => member.user._id.toString() === userId.toString() && member.status === 'active'
     );
-    
+
     if (!isAdmin && !isMember) {
       console.log('User not authorized to add expense');
       return res.status(403).json({
@@ -303,7 +390,7 @@ router.post('/groups/:groupId/expenses', authMiddleware, async (req, res) => {
         message: 'You do not have access to add expenses to this group'
       });
     }
-    
+
     // Get group members including admin
     const allMembers = [
       { _id: group.admin._id.toString() },
@@ -311,7 +398,7 @@ router.post('/groups/:groupId/expenses', authMiddleware, async (req, res) => {
         .filter(member => member.status === 'active')
         .map(member => ({ _id: member.user._id.toString() }))
     ];
-    
+
     // Determine who to split the expense among
     let membersToSplit = allMembers;
     if (splitAmong && splitAmong.length > 0) {
@@ -320,7 +407,7 @@ router.post('/groups/:groupId/expenses', authMiddleware, async (req, res) => {
         splitAmong.includes(member._id.toString())
       );
     }
-    
+
     if (membersToSplit.length === 0) {
       console.log('No valid members to split expense among');
       return res.status(400).json({
@@ -328,17 +415,17 @@ router.post('/groups/:groupId/expenses', authMiddleware, async (req, res) => {
         message: 'No valid members to split expense among'
       });
     }
-    
+
     // Calculate split amount (equal division)
     const splitAmount = parseFloat((amount / membersToSplit.length).toFixed(2));
-    
+
     // Create split details
     const splitDetails = membersToSplit.map(member => ({
       user: member._id,
       amount: splitAmount,
       settled: member._id.toString() === userId.toString() // Mark paid only for the person who paid
     }));
-    
+
     // Create expense record
     const expense = new Expense({
       group: groupId,
@@ -350,16 +437,16 @@ router.post('/groups/:groupId/expenses', authMiddleware, async (req, res) => {
       notes,
       date: date || new Date()
     });
-    
+
     await expense.save();
     console.log(`Expense created with ID: ${expense._id}`);
-    
+
     // Update group total expenses
     await Group.findByIdAndUpdate(groupId, {
       $inc: { totalExpenses: amount },
       updatedAt: new Date()
     });
-    
+
     console.log('Group total expenses updated');
     res.status(201).json({
       success: true,
@@ -374,7 +461,7 @@ router.post('/groups/:groupId/expenses', authMiddleware, async (req, res) => {
         splitAmount: splitAmount // Send the split amount back to the frontend
       }
     });
-    
+
     console.log('Add expense response sent successfully');
   } catch (error) {
     console.error('Add expense error:', error);
@@ -389,6 +476,82 @@ router.post('/groups/:groupId/expenses', authMiddleware, async (req, res) => {
   console.log('--------------------------------------------------');
 });
 
+// Update expense payment status
+router.post('/groups/:groupId/expenses/:expenseId/update-payment', authMiddleware, async (req, res) => {
+  console.log('--------------------------------------------------');
+  console.log(`[${new Date().toISOString()}] Update payment status for expense: ${req.params.expenseId}`);
+
+  try {
+    const { groupId, expenseId } = req.params;
+    const { userId, amountPaid } = req.body;
+    const currentUserId = req.user._id;
+
+    if (!mongoose.Types.ObjectId.isValid(groupId) || !mongoose.Types.ObjectId.isValid(expenseId)) {
+      console.log('Invalid ID format');
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid ID format'
+      });
+    }
+
+    // Find the expense
+    const expense = await Expense.findById(expenseId);
+    if (!expense) {
+      console.log('Expense not found');
+      return res.status(404).json({
+        success: false,
+        message: 'Expense not found'
+      });
+    }
+
+    // Check if the current user is the one who paid for the expense
+    if (expense.paidBy.toString() !== currentUserId.toString()) {
+      console.log('User not authorized to update payment status');
+      return res.status(403).json({
+        success: false,
+        message: 'You are not authorized to update payment status for this expense'
+      });
+    }
+
+    // Find the split entry for the user
+    const splitEntry = expense.splitAmong.find(split => 
+      split.user.toString() === userId.toString()
+    );
+
+    if (!splitEntry) {
+      console.log('User is not part of this expense');
+      return res.status(400).json({
+        success: false,
+        message: 'User is not part of this expense'
+      });
+    }
+
+    // Update the settled status and amount paid
+    splitEntry.settled = true;
+    splitEntry.amountPaid = amountPaid;
+
+    await expense.save();
+    console.log(`Payment status updated for expense ${expenseId} for user ${userId}`);
+
+    res.status(200).json({
+      success: true,
+      message: 'Payment status updated successfully',
+      expenseId
+    });
+
+    console.log('Update payment status response sent successfully');
+  } catch (error) {
+    console.error('Update payment status error:', error);
+    console.error('Error stack:', error.stack);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to update payment status',
+      error: error.message
+    });
+    console.log('Error response sent');
+  }
+  console.log('--------------------------------------------------');
+});
 
 // Get expenses for a group
 router.get('/groups/:groupId/expenses', authMiddleware, async (req, res) => {
@@ -461,11 +624,9 @@ router.get('/groups/:groupId/expenses', authMiddleware, async (req, res) => {
         date: expense.date,
         category: expense.category,
         notes: expense.notes,
-        // Add current user's payment status
         currentUserPaid: expense.splitAmong.find(split => 
           split.user._id.toString() === userId.toString()
         )?.settled || false,
-        // Add a flag to identify if current user paid for this expense
         isPaidByCurrentUser: expense.paidBy._id.toString() === userId.toString()
       }))
     });
