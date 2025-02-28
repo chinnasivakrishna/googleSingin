@@ -154,6 +154,57 @@ router.post('/groups/:groupId/invite', authMiddleware, async (req, res) => {
   console.log('--------------------------------------------------');
 });
 
+// Get user expenses and balance
+router.get('/user/expenses', authMiddleware, async (req, res) => {
+  console.log('--------------------------------------------------');
+  console.log(`[${new Date().toISOString()}] Fetching user expenses and balance for user: ${req.user._id}`);
+
+  try {
+    const userId = req.user._id;
+
+    // Fetch user's expenses
+    const expenses = await Expense.find({ paidBy: userId })
+      .populate('group', 'name photoUrl')
+      .sort({ date: -1 });
+
+    // Calculate user's balance
+    const user = await User.findById(userId);
+    const balance = user.totalBalance || 0;
+
+    console.log(`Found ${expenses.length} expenses for user ${userId}`);
+
+    res.status(200).json({
+      success: true,
+      balance: balance,
+      expenses: expenses.map(expense => ({
+        _id: expense._id,
+        description: expense.description,
+        amount: expense.amount,
+        group: {
+          _id: expense.group._id,
+          name: expense.group.name,
+          photoUrl: expense.group.photoUrl,
+        },
+        date: expense.date,
+        category: expense.category,
+        notes: expense.notes,
+      })),
+    });
+
+    console.log('User expenses and balance response sent successfully');
+  } catch (error) {
+    console.error('Error fetching user expenses and balance:', error);
+    console.error('Error stack:', error.stack);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch user expenses and balance',
+      error: error.message,
+    });
+    console.log('Error response sent');
+  }
+  console.log('--------------------------------------------------');
+});
+
 // Create a new group
 router.post('/groups/create', authMiddleware, async (req, res) => {
   console.log('--------------------------------------------------');
