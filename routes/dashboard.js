@@ -329,14 +329,14 @@ router.post('/groups/:groupId/expenses', authMiddleware, async (req, res) => {
       });
     }
     
-    // Calculate split amount
-    const splitAmount = amount / membersToSplit.length;
+    // Calculate split amount (equal division)
+    const splitAmount = parseFloat((amount / membersToSplit.length).toFixed(2));
     
     // Create split details
     const splitDetails = membersToSplit.map(member => ({
       user: member._id,
       amount: splitAmount,
-      settled: member._id.toString() === userId.toString() // Mark paid for the person who paid
+      settled: member._id.toString() === userId.toString() // Mark paid only for the person who paid
     }));
     
     // Create expense record
@@ -370,7 +370,8 @@ router.post('/groups/:groupId/expenses', authMiddleware, async (req, res) => {
         amount: expense.amount,
         paidBy: userId,
         date: expense.date,
-        splitCount: splitDetails.length
+        splitCount: splitDetails.length,
+        splitAmount: splitAmount // Send the split amount back to the frontend
       }
     });
     
@@ -387,6 +388,7 @@ router.post('/groups/:groupId/expenses', authMiddleware, async (req, res) => {
   }
   console.log('--------------------------------------------------');
 });
+
 
 // Get expenses for a group
 router.get('/groups/:groupId/expenses', authMiddleware, async (req, res) => {
@@ -457,7 +459,14 @@ router.get('/groups/:groupId/expenses', authMiddleware, async (req, res) => {
           settled: split.settled
         })),
         date: expense.date,
-        category: expense.category
+        category: expense.category,
+        notes: expense.notes,
+        // Add current user's payment status
+        currentUserPaid: expense.splitAmong.find(split => 
+          split.user._id.toString() === userId.toString()
+        )?.settled || false,
+        // Add a flag to identify if current user paid for this expense
+        isPaidByCurrentUser: expense.paidBy._id.toString() === userId.toString()
       }))
     });
     
@@ -468,6 +477,76 @@ router.get('/groups/:groupId/expenses', authMiddleware, async (req, res) => {
     res.status(500).json({ 
       success: false, 
       message: 'Failed to load expenses',
+      error: error.message
+    });
+    console.log('Error response sent');
+  }
+  console.log('--------------------------------------------------');
+});
+
+// Mark expense as paid/settled
+router.post('/groups/:groupId/expenses/:expenseId/settle', authMiddleware, async (req, res) => {
+  console.log('--------------------------------------------------');
+  console.log(`[${new Date().toISOString()}] Mark expense as settled for expense: ${req.params.expenseId}`);
+  
+  try {
+    const { groupId, expenseId } = req.params;
+    const userId = req.user._id;
+    
+    if (!mongoose.Types.ObjectId.isValid(groupId) || !mongoose.Types.ObjectId.isValid(expenseId)) {
+      console.log('Invalid ID format');
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid ID format'
+      });
+    }
+    
+    // Find the expense
+    const expense = await Expense.findById(expenseId);
+    if (!expense) {
+      console.log('Expense not found');
+      return res.status(404).json({
+        success: false,
+        message: 'Expense not found'
+      });
+    }
+    
+    // Check if user is part of the expense
+    const splitEntry = expense.splitAmong.find(split => 
+      split.user.toString() === userId.toString()
+    );
+    
+    if (!splitEntry) {
+      console.log('User is not part of this expense');
+      return res.status(403).json({
+        success: false,
+        message: 'You are not involved in this expense'
+      });
+    }
+    
+    // Update settled status for the user
+    expense.splitAmong.forEach(split => {
+      if (split.user.toString() === userId.toString()) {
+        split.settled = true;
+      }
+    });
+    
+    await expense.save();
+    console.log(`Expense ${expenseId} marked as settled for user ${userId}`);
+    
+    res.status(200).json({
+      success: true,
+      message: 'Expense marked as settled',
+      expenseId
+    });
+    
+    console.log('Mark expense as settled response sent successfully');
+  } catch (error) {
+    console.error('Mark expense as settled error:', error);
+    console.error('Error stack:', error.stack);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to mark expense as settled',
       error: error.message
     });
     console.log('Error response sent');
@@ -527,7 +606,8 @@ router.get('/groups/:groupId/balances', authMiddleware, async (req, res) => {
       photoUrl: (await User.findById(group.admin)).photoUrl,
       paid: 0,
       owed: 0,
-      net: 0
+      net: 0,
+      pendingPayments: 0 // Track pending payments
     };
     
     for (const member of group.members) {
@@ -538,7 +618,8 @@ router.get('/groups/:groupId/balances', authMiddleware, async (req, res) => {
           photoUrl: (await User.findById(member.user)).photoUrl,
           paid: 0,
           owed: 0,
-          net: 0
+          net: 0,
+          pendingPayments: 0 // Track pending payments
         };
       }
     }
@@ -559,6 +640,11 @@ router.get('/groups/:groupId/balances', authMiddleware, async (req, res) => {
         if (balances[userId]) {
           balances[userId].owed += split.amount;
           balances[userId].net -= split.amount;
+          
+          // Track pending payments
+          if (!split.settled) {
+            balances[userId].pendingPayments += split.amount;
+          }
         }
       }
     }
