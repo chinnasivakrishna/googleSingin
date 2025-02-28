@@ -20,10 +20,10 @@ router.get('/groups', authMiddleware, async (req, res) => {
     const adminGroups = await Group.find({ admin: userId });
     console.log(`Found ${adminGroups.length} groups where user is admin`);
     
-    // Find groups where user is a member with 'active' status
+    // Find groups where user is a member with 'active' OR 'pending' status
     const memberGroups = await Group.find({
       'members.user': userId,
-      'members.status': 'active'
+      'members.status': { $in: ['active', 'pending'] }
     });
     console.log(`Found ${memberGroups.length} groups where user is member`);
     
@@ -46,7 +46,11 @@ router.get('/groups', authMiddleware, async (req, res) => {
         description: group.description,
         photoUrl: group.photoUrl,
         memberCount: group.memberCount,
-        isAdmin: group.admin.toString() === userId.toString()
+        isAdmin: group.admin.toString() === userId.toString(),
+        // Add member status so frontend can show pending invitations
+        memberStatus: group.admin.toString() === userId.toString() 
+          ? 'admin' 
+          : group.members.find(m => m.user.toString() === userId.toString())?.status || 'unknown'
       }))
     });
     
