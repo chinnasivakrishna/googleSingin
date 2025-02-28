@@ -9,14 +9,12 @@ const groupSchema = new mongoose.Schema({
   },
   description: {
     type: String,
-    required: true,
     trim: true
   },
   photoUrl: {
-    type: String,
-    default: 'default-group.jpg'
+    type: String
   },
-  createdBy: {
+  admin: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
     required: true
@@ -26,25 +24,25 @@ const groupSchema = new mongoose.Schema({
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User'
     },
+    status: {
+      type: String,
+      enum: ['pending', 'active'],
+      default: 'pending'
+    },
     role: {
       type: String,
-      enum: ['admin', 'moderator', 'member'],
+      enum: ['admin', 'member'],
       default: 'member'
     },
-    joinedAt: {
+    addedAt: {
       type: Date,
       default: Date.now
     }
   }],
-  memberCount: {
+  totalExpenses: {
     type: Number,
-    default: 1
+    default: 0
   },
-  isPublic: {
-    type: Boolean,
-    default: true
-  },
-  tags: [String],
   createdAt: {
     type: Date,
     default: Date.now
@@ -55,10 +53,13 @@ const groupSchema = new mongoose.Schema({
   }
 });
 
-// Update timestamps on save
-groupSchema.pre('save', function(next) {
-  this.updatedAt = Date.now();
-  next();
+// Virtual for memberCount
+groupSchema.virtual('memberCount').get(function() {
+  return this.members.filter(member => member.status === 'active').length + 1; // +1 for admin
 });
+
+// Set virtuals to be included in JSON
+groupSchema.set('toJSON', { virtuals: true });
+groupSchema.set('toObject', { virtuals: true });
 
 module.exports = mongoose.model('Group', groupSchema);
