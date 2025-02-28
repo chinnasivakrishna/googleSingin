@@ -155,6 +155,7 @@ router.post('/groups/:groupId/invite', authMiddleware, async (req, res) => {
 });
 
 // Get user expenses and balance
+// Get user expenses and balance
 router.get('/user/expenses', authMiddleware, async (req, res) => {
   console.log('--------------------------------------------------');
   console.log(`[${new Date().toISOString()}] Fetching user expenses and balance for user: ${req.user._id}`);
@@ -167,19 +168,15 @@ router.get('/user/expenses', authMiddleware, async (req, res) => {
       .populate('group', 'name photoUrl')
       .sort({ date: -1 });
 
-    // Calculate user's balance
-    const user = await User.findById(userId);
-    const balance = user.totalBalance || 0;
-
-    console.log(`Found ${expenses.length} expenses for user ${userId}`);
-
-    res.status(200).json({
-      success: true,
-      balance: balance,
-      expenses: expenses.map(expense => ({
+    // Calculate total amount (income - expenses)
+    let totalAmount = 0;
+    const formattedExpenses = expenses.map((expense) => {
+      const amount = expense.amount;
+      totalAmount += amount; // Add to total amount
+      return {
         _id: expense._id,
         description: expense.description,
-        amount: expense.amount,
+        amount: amount, // Positive for income, negative for expenses
         group: {
           _id: expense.group._id,
           name: expense.group.name,
@@ -188,7 +185,15 @@ router.get('/user/expenses', authMiddleware, async (req, res) => {
         date: expense.date,
         category: expense.category,
         notes: expense.notes,
-      })),
+      };
+    });
+
+    console.log(`Found ${expenses.length} expenses for user ${userId}`);
+
+    res.status(200).json({
+      success: true,
+      totalAmount: totalAmount, // Total amount (income - expenses)
+      expenses: formattedExpenses,
     });
 
     console.log('User expenses and balance response sent successfully');
