@@ -4,6 +4,8 @@ const mongoose = require('mongoose');
 const bodyParser = require('body-parser');
 const cors = require('cors');
 const dotenv = require('dotenv');
+
+// Import routes
 const authRoutes = require('./routes/auth');
 const userRoutes = require('./routes/user');
 const dashboardRoutes = require('./routes/dashboard');
@@ -30,7 +32,7 @@ mongoose.connect(process.env.MONGODB_URI)
   .then(() => console.log('Connected to MongoDB'))
   .catch(err => console.error('MongoDB connection error:', err));
 
-// Routes
+// Mount routes
 app.use('/api/auth', authRoutes);
 app.use('/api/user', userRoutes);
 app.use('/api/dashboard', dashboardRoutes);

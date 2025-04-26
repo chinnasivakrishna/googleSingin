@@ -5,9 +5,14 @@ const jwt = require('jsonwebtoken');
 const { OAuth2Client } = require('google-auth-library');
 const User = require('../models/User');
 
-// Google OAuth client setup
-const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
-console.log('Auth routes initialized');
+// Set up valid client IDs array from environment variables
+const validClientIds = [
+  process.env.GOOGLE_CLIENT_ID,           // Web client ID
+  process.env.GOOGLE_ANDROID_CLIENT_ID,   // Android client ID
+  process.env.GOOGLE_EXPO_CLIENT_ID       // Expo client ID
+].filter(Boolean); // Filter out any undefined values
+
+console.log('Auth routes initialized with', validClientIds.length, 'Google client IDs');
 
 // Google authentication handler
 router.post('/google', async (req, res) => {
@@ -18,26 +23,42 @@ router.post('/google', async (req, res) => {
     email: req.body.email,
     name: req.body.name,
     photoUrl: req.body.photoUrl ? 'Photo URL provided' : 'No photo URL',
-    idToken: req.body.idToken ? 'ID token provided' : 'No ID token'
+    idToken: req.body.idToken ? 'ID token provided' : 'No ID token',
+    platform: req.body.platform || 'Not specified'
   });
 
   try {
-    const { googleId, email, name, photoUrl, idToken } = req.body;
+    const { googleId, email, name, photoUrl, idToken, platform } = req.body;
 
     // Verify Google token if idToken is provided
     if (idToken) {
       console.log('Verifying Google ID token...');
-      try {
-        const ticket = await client.verifyIdToken({
-          idToken: idToken,
-          audience: process.env.GOOGLE_CLIENT_ID
-        });
-        console.log('Google token verified successfully');
-        // Token verified successfully, can get payload if needed
-        // const payload = ticket.getPayload();
-      } catch (verifyError) {
-        console.error('Token verification failed:', verifyError.message);
-        console.log('Continuing with provided data instead of failing');
+      
+      // Try verifying with each valid client ID
+      let tokenVerified = false;
+      let verificationError = null;
+      
+      for (const clientId of validClientIds) {
+        try {
+          console.log(`Attempting verification with client ID: ${clientId.substring(0, 10)}...`);
+          const client = new OAuth2Client(clientId);
+          const ticket = await client.verifyIdToken({
+            idToken: idToken,
+            audience: clientId
+          });
+          tokenVerified = true;
+          console.log('Google token verified successfully with client ID:', clientId.substring(0, 10) + '...');
+          break; // Exit the loop once verification succeeds
+        } catch (error) {
+          verificationError = error;
+          console.log(`Verification failed with client ID ${clientId.substring(0, 10)}...: ${error.message}`);
+          // Continue to try the next client ID
+        }
+      }
+
+      if (!tokenVerified) {
+        console.error('Token verification failed with all client IDs:', verificationError?.message);
+        console.log('Continuing with provided data as fallback');
         // Continue with provided data instead of failing
       }
     } else {
@@ -55,14 +76,18 @@ router.post('/google', async (req, res) => {
         googleId,
         email,
         name,
-        photoUrl
+        photoUrl,
+        platform: platform || 'unknown'
       });
       await user.save();
       console.log('New user created successfully:', user._id.toString());
     } else {
       console.log('Existing user found:', user._id.toString());
-      // Update existing user's last login time
+      // Update existing user's last login time and potentially platform
       user.lastLogin = Date.now();
+      if (platform && (!user.platform || user.platform === 'unknown')) {
+        user.platform = platform;
+      }
       await user.save();
       console.log('User last login updated');
     }
@@ -74,7 +99,6 @@ router.post('/google', async (req, res) => {
       process.env.JWT_SECRET,
       { expiresIn: '7d' }
     );
-    console.log(token);
     console.log('JWT token generated successfully');
 
     // Return token and user info
@@ -85,7 +109,8 @@ router.post('/google', async (req, res) => {
         id: user._id,
         name: user.name,
         email: user.email,
-        photoUrl: user.photoUrl
+        photoUrl: user.photoUrl,
+        platform: user.platform
       }
     });
     console.log('Response sent');
@@ -131,11 +156,12 @@ router.get('/user', async (req, res) => {
         id: user._id,
         name: user.name,
         email: user.email,
-        photoUrl: user.photoUrl
+        photoUrl: user.photoUrl,
+        platform: user.platform
       }
     });
     
-    console.log('User data response sent',user.id,user.name,user.photoUrl);
+    console.log('User data response sent');
   } catch (error) {
     console.error('Auth verification error:', error);
     if (error.name === 'JsonWebTokenError') {

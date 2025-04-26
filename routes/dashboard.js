@@ -7,6 +7,16 @@ const User = require('../models/User');
 const Group = require('../models/Group');
 const Expense = require('../models/Expense');
 
+// Import route modules
+const groupRoutes = require('./dashboard/groups');
+const expenseRoutes = require('./dashboard/expenses');
+const balanceRoutes = require('./dashboard/balances');
+
+// Mount routes
+router.use('/groups', groupRoutes);
+router.use('/expenses', expenseRoutes);
+router.use('/balances', balanceRoutes);
+
 // Get all groups for a user
 router.get('/groups', authMiddleware, async (req, res) => {
   console.log('--------------------------------------------------');
@@ -393,15 +403,26 @@ router.get('/groups/:groupId', authMiddleware, async (req, res) => {
   console.log('--------------------------------------------------');
 });
 
-// Add expense to a group
-// Add expense to a group
+// Update the route for adding expense to a group
 router.post('/groups/:groupId/expenses', authMiddleware, async (req, res) => {
   console.log('--------------------------------------------------');
   console.log(`[${new Date().toISOString()}] Add expense request for group: ${req.params.groupId}`);
+  console.log('Request body:', req.body);
 
   try {
     const { groupId } = req.params;
-    const { description, amount, splitAmong, category, notes, date } = req.body;
+    const { 
+      description, 
+      amount, 
+      splitAmong, 
+      splitAmounts, 
+      splitType,
+      category, 
+      notes, 
+      date, 
+      paidBy 
+    } = req.body;
+    
     const userId = req.user._id;
 
     if (!mongoose.Types.ObjectId.isValid(groupId)) {
@@ -472,26 +493,37 @@ router.post('/groups/:groupId/expenses', authMiddleware, async (req, res) => {
       });
     }
 
-    // Calculate split amount (equal division)
-    const splitAmount = parseFloat((amount / membersToSplit.length).toFixed(2));
-
-    // Create split details
-    const splitDetails = membersToSplit.map(member => ({
-      user: member._id,
-      amount: splitAmount,
-      settled: member._id.toString() === userId.toString() // Mark paid only for the person who paid
-    }));
+    // Create split details based on splitType
+    let splitDetails = [];
+    
+    if (splitType === 'unequal' && splitAmounts) {
+      // For unequal split, use the provided split amounts
+      splitDetails = splitAmong.map(memberId => ({
+        user: memberId,
+        amount: splitAmounts[memberId] || 0,
+        settled: memberId === paidBy // Mark as settled if this is the payer
+      }));
+    } else {
+      // For equal split, calculate equal amounts
+      const splitAmount = parseFloat((amount / membersToSplit.length).toFixed(2));
+      splitDetails = membersToSplit.map(member => ({
+        user: member._id,
+        amount: splitAmount,
+        settled: member._id.toString() === paidBy // Mark as settled if this is the payer
+      }));
+    }
 
     // Create expense record
     const expense = new Expense({
       group: groupId,
       description,
       amount,
-      paidBy: userId,
+      paidBy: paidBy || userId,
       splitAmong: splitDetails,
       category: category || 'Other',
       notes,
-      date: date || new Date()
+      date: date || new Date(),
+      splitType: splitType || 'equal'
     });
 
     await expense.save();
@@ -511,10 +543,10 @@ router.post('/groups/:groupId/expenses', authMiddleware, async (req, res) => {
         _id: expense._id,
         description: expense.description,
         amount: expense.amount,
-        paidBy: userId,
+        paidBy: paidBy || userId,
         date: expense.date,
-        splitCount: splitDetails.length,
-        splitAmount: splitAmount // Send the split amount back to the frontend
+        splitType: expense.splitType,
+        splitCount: splitDetails.length
       }
     });
 
@@ -618,6 +650,7 @@ router.get('/groups/:groupId/expenses', authMiddleware, async (req, res) => {
     const { groupId } = req.params;
     const userId = req.user._id;
     
+    // Validate groupId
     if (!mongoose.Types.ObjectId.isValid(groupId)) {
       console.log('Invalid group ID format');
       return res.status(400).json({
@@ -636,6 +669,7 @@ router.get('/groups/:groupId/expenses', authMiddleware, async (req, res) => {
       });
     }
     
+    // Check user's access
     const isAdmin = group.admin.toString() === userId.toString();
     const isMember = group.members.some(
       member => member.user.toString() === userId.toString() && member.status === 'active'
@@ -649,7 +683,7 @@ router.get('/groups/:groupId/expenses', authMiddleware, async (req, res) => {
       });
     }
     
-    // Fetch expenses
+    // Fetch expenses with populated fields
     const expenses = await Expense.find({ group: groupId })
       .populate('paidBy', 'name email photoUrl')
       .populate('splitAmong.user', 'name email photoUrl')
@@ -657,34 +691,37 @@ router.get('/groups/:groupId/expenses', authMiddleware, async (req, res) => {
     
     console.log(`Found ${expenses.length} expenses for group`);
     
+    // Format expenses for response
+    const formattedExpenses = expenses.map(expense => ({
+      _id: expense._id,
+      description: expense.description,
+      amount: expense.amount,
+      paidBy: {
+        _id: expense.paidBy._id,
+        name: expense.paidBy.name,
+        photoUrl: expense.paidBy.photoUrl
+      },
+      splitAmong: expense.splitAmong.map(split => ({
+        user: {
+          _id: split.user._id,
+          name: split.user.name,
+          photoUrl: split.user.photoUrl
+        },
+        amount: split.amount,
+        settled: split.settled
+      })),
+      date: expense.date,
+      category: expense.category,
+      notes: expense.notes,
+      isPaidByCurrentUser: expense.paidBy._id.toString() === userId.toString(),
+      currentUserPaid: expense.splitAmong.find(split => 
+        split.user._id.toString() === userId.toString()
+      )?.settled || false
+    }));
+    
     res.status(200).json({
       success: true,
-      expenses: expenses.map(expense => ({
-        _id: expense._id,
-        description: expense.description,
-        amount: expense.amount,
-        paidBy: {
-          _id: expense.paidBy._id,
-          name: expense.paidBy.name,
-          photoUrl: expense.paidBy.photoUrl
-        },
-        splitAmong: expense.splitAmong.map(split => ({
-          user: {
-            _id: split.user._id,
-            name: split.user.name,
-            photoUrl: split.user.photoUrl
-          },
-          amount: split.amount,
-          settled: split.settled
-        })),
-        date: expense.date,
-        category: expense.category,
-        notes: expense.notes,
-        currentUserPaid: expense.splitAmong.find(split => 
-          split.user._id.toString() === userId.toString()
-        )?.settled || false,
-        isPaidByCurrentUser: expense.paidBy._id.toString() === userId.toString()
-      }))
+      expenses: formattedExpenses
     });
     
     console.log('Get expenses response sent successfully');
@@ -813,6 +850,8 @@ router.get('/groups/:groupId/balances', authMiddleware, async (req, res) => {
       .populate('paidBy', 'name email photoUrl')
       .populate('splitAmong.user', 'name email photoUrl');
     
+    console.log(`Found ${expenses.length} expenses for group`);
+    
     // Calculate balances
     const balances = {};
     
@@ -824,7 +863,9 @@ router.get('/groups/:groupId/balances', authMiddleware, async (req, res) => {
       paid: 0,
       owed: 0,
       net: 0,
-      pendingPayments: 0 // Track pending payments
+      pendingPayments: 0,
+      detailedBalances: [],
+      isCurrentUser: group.admin.toString() === userId.toString()
     };
     
     for (const member of group.members) {
@@ -836,7 +877,9 @@ router.get('/groups/:groupId/balances', authMiddleware, async (req, res) => {
           paid: 0,
           owed: 0,
           net: 0,
-          pendingPayments: 0 // Track pending payments
+          pendingPayments: 0,
+          detailedBalances: [],
+          isCurrentUser: member.user.toString() === userId.toString()
         };
       }
     }
@@ -845,29 +888,116 @@ router.get('/groups/:groupId/balances', authMiddleware, async (req, res) => {
     for (const expense of expenses) {
       const paidById = expense.paidBy._id.toString();
       
-      // Add amount paid
-      if (balances[paidById]) {
-        balances[paidById].paid += expense.amount;
-        balances[paidById].net += expense.amount;
+      // Skip settlement expenses for balance calculations
+      if (expense.category === 'Settlement') {
+        console.log(`Skipping settlement expense: ${expense._id}`);
+        continue;
       }
       
-      // Subtract amount owed by each person
+      // Calculate total unsettled amount for this expense
+      let totalUnsettledAmount = 0;
       for (const split of expense.splitAmong) {
-        const userId = split.user._id.toString();
-        if (balances[userId]) {
-          balances[userId].owed += split.amount;
-          balances[userId].net -= split.amount;
-          
-          // Track pending payments
           if (!split.settled) {
-            balances[userId].pendingPayments += split.amount;
-          }
+          totalUnsettledAmount += split.amount;
+        }
+      }
+      
+      // Only add to paid amount if there are unsettled splits
+      if (totalUnsettledAmount > 0 && balances[paidById]) {
+        balances[paidById].paid += totalUnsettledAmount;
+        balances[paidById].net += totalUnsettledAmount;
+      }
+      
+      // Subtract amount owed by each person (only for unsettled splits)
+      for (const split of expense.splitAmong) {
+        const splitUserId = split.user._id.toString();
+        
+        // Only process unsettled splits
+        if (!split.settled && balances[splitUserId]) {
+          balances[splitUserId].owed += split.amount;
+          balances[splitUserId].net -= split.amount;
+          balances[splitUserId].pendingPayments += split.amount;
         }
       }
     }
     
-    // Convert balances object to array
-    const balancesArray = Object.values(balances);
+    // Calculate detailed balances between users
+    const userIds = Object.keys(balances);
+    
+    // For each pair of users, calculate the net balance
+    for (let i = 0; i < userIds.length; i++) {
+      for (let j = i + 1; j < userIds.length; j++) {
+        const user1Id = userIds[i];
+        const user2Id = userIds[j];
+        
+        // Calculate how much each user paid for the other
+        let user1PaidForUser2 = 0;
+        let user2PaidForUser1 = 0;
+        
+        for (const expense of expenses) {
+          // Skip settlement expenses
+          if (expense.category === 'Settlement') {
+            continue;
+          }
+          
+          const paidById = expense.paidBy._id.toString();
+          
+          // If user1 paid for this expense
+          if (paidById === user1Id) {
+            // Check if user2 was part of the split
+            const user2Split = expense.splitAmong.find(split => 
+              split.user._id.toString() === user2Id
+            );
+            
+            if (user2Split && !user2Split.settled) {
+              user1PaidForUser2 += user2Split.amount;
+            }
+          }
+          
+          // If user2 paid for this expense
+          if (paidById === user2Id) {
+            // Check if user1 was part of the split
+            const user1Split = expense.splitAmong.find(split => 
+              split.user._id.toString() === user1Id
+            );
+            
+            if (user1Split && !user1Split.settled) {
+              user2PaidForUser1 += user1Split.amount;
+            }
+          }
+        }
+        
+        // Calculate net balance between the two users
+        const netBalance = user1PaidForUser2 - user2PaidForUser1;
+        
+        // Only add non-zero balances
+        if (Math.abs(netBalance) > 0.01) {
+          // Add to user1's detailed balances
+          balances[user1Id].detailedBalances.push({
+            withUser: {
+              _id: user2Id,
+              name: balances[user2Id].name,
+              photoUrl: balances[user2Id].photoUrl
+            },
+            amount: netBalance
+          });
+          
+          // Add to user2's detailed balances (with opposite amount)
+          balances[user2Id].detailedBalances.push({
+            withUser: {
+              _id: user1Id,
+              name: balances[user1Id].name,
+              photoUrl: balances[user1Id].photoUrl
+            },
+            amount: -netBalance
+          });
+        }
+      }
+    }
+    
+    // Convert balances object to array and filter out users with zero net balance
+    const balancesArray = Object.values(balances)
+      .filter(balance => Math.abs(balance.net) >= 0.01);
     
     res.status(200).json({
       success: true,
@@ -886,6 +1016,167 @@ router.get('/groups/:groupId/balances', authMiddleware, async (req, res) => {
     console.log('Error response sent');
   }
   console.log('--------------------------------------------------');
+});
+
+// Update the settle-balance route with more detailed logging
+router.post('/groups/:groupId/settle-balance', authMiddleware, async (req, res) => {
+  console.log('==================================================');
+  console.log(`[${new Date().toISOString()}] SETTLE BALANCE DEBUG`);
+  console.log('Group ID:', req.params.groupId);
+  console.log('Request body:', req.body);
+  console.log('Current user:', req.user._id);
+
+  try {
+    const { groupId } = req.params;
+    const { userId, withUserId, amount } = req.body;
+    const currentUserId = req.user._id;
+
+    console.log('Parsed data:');
+    console.log('- Group ID:', groupId);
+    console.log('- User ID:', userId);
+    console.log('- With User ID:', withUserId);
+    console.log('- Amount:', amount);
+    console.log('- Current User ID:', currentUserId);
+
+    // Validate IDs
+    if (!mongoose.Types.ObjectId.isValid(groupId) || 
+        !mongoose.Types.ObjectId.isValid(userId) || 
+        !mongoose.Types.ObjectId.isValid(withUserId)) {
+      console.log('Invalid ID format detected');
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid ID format'
+      });
+    }
+
+    // Verify the current user is involved in this settlement
+    if (currentUserId.toString() !== userId.toString() && 
+        currentUserId.toString() !== withUserId.toString()) {
+      console.log('User not authorized to settle this balance');
+      return res.status(403).json({
+        success: false,
+        message: 'You are not authorized to settle this balance'
+      });
+    }
+
+    console.log('Authorization check passed');
+
+    // Find all unsettled expenses between these users
+    console.log('Finding unsettled expenses between users');
+    const expenses = await Expense.find({
+      group: groupId,
+      $or: [
+        { paidBy: withUserId, 'splitAmong.user': userId, 'splitAmong.settled': false },
+        { paidBy: userId, 'splitAmong.user': withUserId, 'splitAmong.settled': false }
+      ]
+    });
+
+    console.log(`Found ${expenses.length} unsettled expenses between users`);
+    
+    // If no unsettled expenses are found, create a direct settlement record
+    if (expenses.length === 0) {
+      console.log('No unsettled expenses found, creating direct settlement');
+      
+      // Create a new expense to record the settlement
+      const settlementExpense = new Expense({
+        group: groupId,
+        description: 'Balance Settlement',
+        amount: amount,
+        paidBy: userId, // The user who is settling up
+        splitAmong: [
+          {
+            user: userId,
+            amount: 0, // The user who paid doesn't owe anything
+            settled: true
+          },
+          {
+            user: withUserId,
+            amount: amount, // The full amount is assigned to the other user
+            settled: true // Mark as settled immediately
+          }
+        ],
+        date: new Date(),
+        category: 'Settlement',
+        notes: 'Direct balance settlement'
+      });
+      
+      await settlementExpense.save();
+      console.log(`Created settlement expense with ID: ${settlementExpense._id}`);
+      
+      res.status(200).json({
+        success: true,
+        message: 'Balance settled successfully with a direct settlement',
+        settledCount: 1,
+        directSettlement: true
+      });
+      
+      console.log('Direct settlement response sent successfully');
+      console.log('==================================================');
+      return;
+    }
+
+    // Mark expenses as settled
+    let settledCount = 0;
+    for (const expense of expenses) {
+      console.log(`Processing expense: ${expense._id}`);
+      
+      if (expense.paidBy.toString() === withUserId.toString()) {
+        console.log(`Expense paid by withUserId (${withUserId})`);
+        // This user owes money to the other user
+        // Find the split for the current user
+        const splitIndex = expense.splitAmong.findIndex(split => 
+          split.user.toString() === userId.toString() && !split.settled
+        );
+        
+        console.log(`Split index for userId (${userId}): ${splitIndex}`);
+        
+        if (splitIndex !== -1) {
+          console.log(`Marking split as settled for user ${userId}`);
+          expense.splitAmong[splitIndex].settled = true;
+          await expense.save();
+          settledCount++;
+          console.log(`Marked expense ${expense._id} as settled for user ${userId}`);
+        }
+      } else if (expense.paidBy.toString() === userId.toString()) {
+        console.log(`Expense paid by userId (${userId})`);
+        // The other user owes money to this user
+        // Find the split for the other user
+        const splitIndex = expense.splitAmong.findIndex(split => 
+          split.user.toString() === withUserId.toString() && !split.settled
+        );
+        
+        console.log(`Split index for withUserId (${withUserId}): ${splitIndex}`);
+        
+        if (splitIndex !== -1) {
+          console.log(`Marking split as settled for user ${withUserId}`);
+          expense.splitAmong[splitIndex].settled = true;
+          await expense.save();
+          settledCount++;
+          console.log(`Marked expense ${expense._id} as settled for user ${withUserId}`);
+        }
+      }
+    }
+
+    console.log(`Settled ${settledCount} expenses between users ${userId} and ${withUserId}`);
+    
+    res.status(200).json({
+      success: true,
+      message: 'Balance settled successfully',
+      settledCount
+    });
+    
+    console.log('Settle balance response sent successfully');
+  } catch (error) {
+    console.error('Settle balance error:', error);
+    console.error('Error stack:', error.stack);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Failed to settle balance',
+      error: error.message
+    });
+    console.log('Error response sent');
+  }
+  console.log('==================================================');
 });
 
 module.exports = router;

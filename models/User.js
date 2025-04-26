@@ -79,6 +79,11 @@ const userSchema = new mongoose.Schema({
     type: Date,
     default: Date.now
   },
+  platform: {
+    type: String,
+    enum: ['web', 'ios', 'android', 'expo', 'unknown'],
+    default: 'unknown'
+  },
   lastLogin: {
     type: Date,
     default: Date.now
