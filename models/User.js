@@ -1,4 +1,4 @@
-// models/User.js - Updated User schema for MongoDB with friends and expenses
+// models/User.js - Updated User schema with password field
 const mongoose = require('mongoose');
 
 const userSchema = new mongoose.Schema({
@@ -13,6 +13,11 @@ const userSchema = new mongoose.Schema({
     unique: true,
     lowercase: true,
     trim: true
+  },
+  // Add password field for email authentication
+  password: {
+    type: String,
+    // Not required because Google users won't have a password
   },
   name: {
     type: String,

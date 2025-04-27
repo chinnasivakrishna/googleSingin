@@ -14,6 +14,143 @@ const validClientIds = [
 
 console.log('Auth routes initialized with', validClientIds.length, 'Google client IDs');
 
+// Add these routes to your auth.js file
+
+const bcrypt = require('bcryptjs');
+
+// Email/password registration route
+router.post('/register', async (req, res) => {
+  console.log('--------------------------------------------------');
+  console.log(`[${new Date().toISOString()}] Received registration request`);
+  
+  try {
+    const { email, password, name, platform } = req.body;
+    
+    // Validate input
+    if (!email || !password || !name) {
+      console.log('Registration failed: Missing required fields');
+      return res.status(400).json({ message: 'Email, password, and name are required' });
+    }
+    
+    // Check if user already exists
+    const existingUser = await User.findOne({ email });
+    if (existingUser) {
+      console.log('Registration failed: Email already in use');
+      return res.status(400).json({ message: 'Email already in use' });
+    }
+    
+    // Hash password
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(password, salt);
+    
+    // Create new user
+    const user = new User({
+      email,
+      password: hashedPassword,
+      name,
+      platform: platform || 'unknown',
+      // Generate a unique ID for non-Google users
+      googleId: `local_${Date.now()}_${Math.random().toString(36).substring(2, 15)}`
+    });
+    
+    await user.save();
+    console.log('New user registered:', user._id.toString());
+    
+    // Generate JWT token
+    const token = jwt.sign(
+      { userId: user._id },
+      process.env.JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+    
+    // Return user data and token
+    res.status(201).json({
+      token,
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        photoUrl: user.photoUrl,
+        platform: user.platform
+      }
+    });
+    
+    console.log('Registration successful');
+  } catch (error) {
+    console.error('Registration error:', error);
+    res.status(500).json({ message: 'Registration failed', error: error.message });
+  }
+  console.log('--------------------------------------------------');
+});
+
+// Email/password login route
+router.post('/login', async (req, res) => {
+  console.log('--------------------------------------------------');
+  console.log(`[${new Date().toISOString()}] Received email login request`);
+  
+  try {
+    const { email, password, platform } = req.body;
+    
+    // Validate input
+    if (!email || !password) {
+      console.log('Login failed: Missing email or password');
+      return res.status(400).json({ message: 'Email and password are required' });
+    }
+    
+    // Find user by email
+    const user = await User.findOne({ email });
+    if (!user) {
+      console.log('Login failed: User not found');
+      return res.status(401).json({ message: 'Invalid email or password' });
+    }
+    
+    // Check if user has a password (might be Google-only user)
+    if (!user.password) {
+      console.log('Login failed: User has no password (Google account only)');
+      return res.status(401).json({ message: 'This account uses Google Sign-In only' });
+    }
+    
+    // Verify password
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) {
+      console.log('Login failed: Invalid password');
+      return res.status(401).json({ message: 'Invalid email or password' });
+    }
+    
+    // Update user's last login and platform
+    user.lastLogin = Date.now();
+    if (platform && (!user.platform || user.platform === 'unknown')) {
+      user.platform = platform;
+    }
+    await user.save();
+    
+    // Generate JWT token
+    const token = jwt.sign(
+      { userId: user._id },
+      process.env.JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+    
+    // Return user data and token
+    res.status(200).json({
+      token,
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        photoUrl: user.photoUrl,
+        platform: user.platform
+      }
+    });
+    
+    console.log('Login successful for user:', user._id.toString());
+  } catch (error) {
+    console.error('Login error:', error);
+    res.status(500).json({ message: 'Login failed', error: error.message });
+  }
+  console.log('--------------------------------------------------');
+});
+
 // Google authentication handler
 router.post('/google', async (req, res) => {
   console.log('--------------------------------------------------');
