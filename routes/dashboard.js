@@ -6,16 +6,125 @@ const authMiddleware = require('../middleware/auth');
 const User = require('../models/User');
 const Group = require('../models/Group');
 const Expense = require('../models/Expense');
+const Notification = require('../models/Notification'); // Add this import at the top
 
 // Import route modules
 const groupRoutes = require('./dashboard/groups');
 const expenseRoutes = require('./dashboard/expenses');
 const balanceRoutes = require('./dashboard/balances');
+const notificationRoutes = require('./dashboard/notifications'); // Add this import
 
 // Mount routes
 router.use('/groups', groupRoutes);
 router.use('/expenses', expenseRoutes);
 router.use('/balances', balanceRoutes);
+router.use('/notifications', notificationRoutes); // Mount notification routes
+
+const Notification = require('../models/Notification'); // Add this import at the top
+
+router.post('/groups/:groupId/invite', authMiddleware, async (req, res) => {
+  console.log('--------------------------------------------------');
+  console.log(`[${new Date().toISOString()}] Invite member request for group: ${req.params.groupId}`);
+
+  try {
+    const { groupId } = req.params;
+    const { email } = req.body;
+    const userId = req.user._id;
+
+    if (!mongoose.Types.ObjectId.isValid(groupId)) {
+      console.log('Invalid group ID format');
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid group ID'
+      });
+    }
+
+    // Find the group with populated admin data
+    const group = await Group.findById(groupId).populate('admin', 'name email');
+    if (!group) {
+      console.log('Group not found');
+      return res.status(404).json({
+        success: false,
+        message: 'Group not found'
+      });
+    }
+
+    // Check if the user is the admin of the group
+    if (group.admin._id.toString() !== userId.toString()) {
+      console.log('User not authorized to invite members');
+      return res.status(403).json({
+        success: false,
+        message: 'Only the group admin can invite members'
+      });
+    }
+
+    // Find the user by email
+    const userToInvite = await User.findOne({ email: email.toLowerCase() });
+    if (!userToInvite) {
+      console.log('User not found');
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    // Check if the user is already a member of the group
+    const isAlreadyMember = group.members.some(member => 
+      member.user.toString() === userToInvite._id.toString()
+    );
+    
+    if (isAlreadyMember) {
+      console.log('User is already a member of the group');
+      return res.status(400).json({
+        success: false,
+        message: 'User is already a member of the group'
+      });
+    }
+
+    // Add the user to the group's members list with a 'pending' status
+    group.members.push({
+      user: userToInvite._id,
+      status: 'pending',
+      role: 'member'
+    });
+
+    // Create notification for the invited user
+    const notificationMessage = `${group.admin.name} invited you to join group "${group.name}"`;
+    
+    const notification = new Notification({
+      recipient: userToInvite._id,
+      sender: userId,
+      type: 'group_invite',
+      message: notificationMessage,
+      relatedGroup: groupId
+    });
+
+    // Save both the group update and the new notification
+    await Promise.all([
+      group.save(),
+      notification.save()
+    ]);
+    
+    console.log(`User ${userToInvite._id} invited to group ${groupId} and notification created`);
+
+    res.status(200).json({
+      success: true,
+      message: 'Invitation sent successfully'
+    });
+
+    console.log('Invite member response sent successfully');
+  } catch (error) {
+    console.error('Invite member error:', error);
+    console.error('Error stack:', error.stack);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to send invitation',
+      error: error.message
+    });
+    console.log('Error response sent');
+  }
+  console.log('--------------------------------------------------');
+});
 
 // Get all groups for a user
 router.get('/groups', authMiddleware, async (req, res) => {
@@ -78,91 +187,7 @@ router.get('/groups', authMiddleware, async (req, res) => {
   console.log('--------------------------------------------------');
 });
 
-// Add this route to your dashboard.js file
-router.post('/groups/:groupId/invite', authMiddleware, async (req, res) => {
-  console.log('--------------------------------------------------');
-  console.log(`[${new Date().toISOString()}] Invite member request for group: ${req.params.groupId}`);
 
-  try {
-    const { groupId } = req.params;
-    const { email } = req.body;
-    const userId = req.user._id;
-
-    if (!mongoose.Types.ObjectId.isValid(groupId)) {
-      console.log('Invalid group ID format');
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid group ID'
-      });
-    }
-
-    // Find the group
-    const group = await Group.findById(groupId);
-    if (!group) {
-      console.log('Group not found');
-      return res.status(404).json({
-        success: false,
-        message: 'Group not found'
-      });
-    }
-
-    // Check if the user is the admin of the group
-    if (group.admin.toString() !== userId.toString()) {
-      console.log('User not authorized to invite members');
-      return res.status(403).json({
-        success: false,
-        message: 'Only the group admin can invite members'
-      });
-    }
-
-    // Find the user by email
-    const userToInvite = await User.findOne({ email: email.toLowerCase() });
-    if (!userToInvite) {
-      console.log('User not found');
-      return res.status(404).json({
-        success: false,
-        message: 'User not found'
-      });
-    }
-
-    // Check if the user is already a member of the group
-    const isAlreadyMember = group.members.some(member => member.user.toString() === userToInvite._id.toString());
-    if (isAlreadyMember) {
-      console.log('User is already a member of the group');
-      return res.status(400).json({
-        success: false,
-        message: 'User is already a member of the group'
-      });
-    }
-
-    // Add the user to the group's members list with a 'pending' status
-    group.members.push({
-      user: userToInvite._id,
-      status: 'pending',
-      role: 'member'
-    });
-
-    await group.save();
-    console.log(`User ${userToInvite._id} invited to group ${groupId}`);
-
-    res.status(200).json({
-      success: true,
-      message: 'Invitation sent successfully'
-    });
-
-    console.log('Invite member response sent successfully');
-  } catch (error) {
-    console.error('Invite member error:', error);
-    console.error('Error stack:', error.stack);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to send invitation',
-      error: error.message
-    });
-    console.log('Error response sent');
-  }
-  console.log('--------------------------------------------------');
-});
 
 // Get user expenses and balance
 // Get user expenses and balance
